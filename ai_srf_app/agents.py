@@ -65,6 +65,16 @@ def _json_safe(text: str) -> dict | None:
         return None
 
 
+def _extract_stage_brief(text: str) -> str:
+    if not text:
+        return ""
+    match = re.search(r"STAGE_BRIEF:\s*(.*?)(?:\n\s*\{|\Z)", text, re.S)
+    if match:
+        return match.group(1).strip()
+    prefix = re.split(r"\n\s*\{", text, maxsplit=1)[0].strip()
+    return prefix[:600]
+
+
 def _default_trace() -> list[dict[str, Any]]:
     return []
 
@@ -93,11 +103,13 @@ def _call_groq(
     *,
     use_tools: bool = False,
     temperature: float = 0.15,
+    model: str | None = None,
+    use_system_prompt: bool = True,
 ) -> dict[str, Any]:
     messages = [{"role": "user", "content": user}]
     tool_names: list[str] = []
     kwargs: dict[str, Any] = {
-        "model": GROQ_LLM_MODEL,
+        "model": model or GROQ_LLM_MODEL,
         "temperature": temperature,
         "max_tokens": 1800,
     }
@@ -107,9 +119,14 @@ def _call_groq(
 
     try:
         for _ in range(3):
+            message_list = [*messages]
+            if use_system_prompt:
+                message_list = [{"role": "system", "content": system}, *message_list]
+            else:
+                message_list = [{"role": "user", "content": f"{system}\n\n# EXECUTIVE QUESTION\n{user}"}]
             response = _groq.chat.completions.create(
-                model=GROQ_LLM_MODEL,
-                messages=[{"role": "system", "content": system}, *messages],
+                model=model or GROQ_LLM_MODEL,
+                messages=message_list,
                 **{k: v for k, v in kwargs.items() if k not in ("model",)},
             )
             msg = response.choices[0].message
@@ -140,8 +157,8 @@ def _call_groq(
                 )
 
         response = _groq.chat.completions.create(
-            model=GROQ_LLM_MODEL,
-            messages=[{"role": "system", "content": system}, *messages],
+            model=model or GROQ_LLM_MODEL,
+            messages=([{"role": "system", "content": system}, *messages] if use_system_prompt else [{"role": "user", "content": f"{system}\n\n# EXECUTIVE QUESTION\n{user}"}]),
             temperature=temperature,
             max_tokens=1800,
         )
@@ -170,6 +187,7 @@ def _context_block(state: AISRFState, *extra: str) -> str:
 
 
 def run_environmental_monitor(state: AISRFState) -> dict[str, Any]:
+    spec = AGENT_PROMPT_SPECS["env"]
     live_search = execute_tool_sync(
         "search_live_web",
         {
@@ -179,14 +197,15 @@ def run_environmental_monitor(state: AISRFState) -> dict[str, Any]:
             "limit": 5,
         },
     )
-    prompt = AGENT_PROMPT_SPECS["env"].render(
+    prompt = spec.render(
         _context_block(
             state,
             f"External MCP live-search package: {live_search}",
             "MANDATORY TOOLING: Use get_sa_infrastructure_signal and search_live_web to retrieve live infrastructure signals before classifying the risk state.",
         )
     )
-    raw = _call_groq(prompt, state["query"], use_tools=True)
+    raw = _call_groq(prompt, state["query"], use_tools=True, temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed.get("layer_1_sensing_package") if parsed and "layer_1_sensing_package" in parsed else {
         "current_risk_state": "Elevated",
@@ -200,19 +219,22 @@ def run_environmental_monitor(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "env": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "env", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
 
 
 def run_socratic_partner(state: AISRFState) -> dict[str, Any]:
-    prompt = AGENT_PROMPT_SPECS["socratic"].render(
+    spec = AGENT_PROMPT_SPECS["socratic"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Layer 1 sensing package: {json.dumps(state['env'], ensure_ascii=True)}",
         )
     )
-    raw = _call_groq(prompt, state["query"])
+    raw = _call_groq(prompt, state["query"], temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed.get("diagnostic_framing") if parsed and "diagnostic_framing" in parsed else {
         "identified_blind_spots": [
@@ -228,13 +250,15 @@ def run_socratic_partner(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "socratic": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "socratic", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
 
 
 def run_forensic_analyst(state: AISRFState) -> dict[str, Any]:
-    prompt = AGENT_PROMPT_SPECS["forensic"].render(
+    spec = AGENT_PROMPT_SPECS["forensic"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Layer 1 sensing package: {json.dumps(state['env'], ensure_ascii=True)}",
@@ -242,7 +266,8 @@ def run_forensic_analyst(state: AISRFState) -> dict[str, Any]:
             "TOOLS: Use check_bbbee_compliance_risk and run_data_provenance_audit where relevant.",
         )
     )
-    raw = _call_groq(prompt, state["query"], use_tools=True)
+    raw = _call_groq(prompt, state["query"], use_tools=True, temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed.get("forensic_analysis_report") if parsed and "forensic_analysis_report" in parsed else {
         "dependency_map": [
@@ -264,20 +289,23 @@ def run_forensic_analyst(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "forensic": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "forensic", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
 
 
 def run_creative_catalyst(state: AISRFState) -> dict[str, Any]:
-    prompt = AGENT_PROMPT_SPECS["catalyst"].render(
+    spec = AGENT_PROMPT_SPECS["catalyst"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Forensic report: {json.dumps(state['forensic'], ensure_ascii=True)}",
             "TOOLS: Use estimate_ror_baseline to calibrate projections for the South African operating environment.",
         )
     )
-    raw = _call_groq(prompt, state["query"], use_tools=True)
+    raw = _call_groq(prompt, state["query"], use_tools=True, temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed if parsed and "strategic_options" in parsed else {
         "strategic_options": [
@@ -306,19 +334,22 @@ def run_creative_catalyst(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "catalyst": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "catalyst", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
 
 
 def run_devils_advocate(state: AISRFState) -> dict[str, Any]:
-    prompt = AGENT_PROMPT_SPECS["devils"].render(
+    spec = AGENT_PROMPT_SPECS["devils"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Strategic options: {json.dumps(state['catalyst'], ensure_ascii=True)}",
         )
     )
-    raw = _call_groq(prompt, state["query"])
+    raw = _call_groq(prompt, state["query"], temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed if parsed and "stress_test_report" in parsed else {
         "stress_test_report": [
@@ -339,6 +370,7 @@ def run_devils_advocate(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "devils": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "devils", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
@@ -350,14 +382,16 @@ def run_implementation_scaffolding(state: AISRFState) -> dict[str, Any]:
     best_option = next((o for o, r in zip(options, reports) if r.get("verdict", {}).get("rating") != "DEFER"), options[0] if options else {})
     best_verdict = next((r for r in reports if r.get("verdict", {}).get("rating") != "DEFER"), reports[0] if reports else {})
 
-    prompt = AGENT_PROMPT_SPECS["scaffold"].render(
+    spec = AGENT_PROMPT_SPECS["scaffold"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Selected strategy: {json.dumps(best_option, ensure_ascii=True)}",
             f"Devil's Advocate verdict: {json.dumps(best_verdict, ensure_ascii=True)}",
         )
     )
-    raw = _call_groq(prompt, state["query"])
+    raw = _call_groq(prompt, state["query"], temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed.get("phased_implementation_plan") if parsed and "phased_implementation_plan" in parsed else {
         "tier_1_native_execution": [
@@ -374,13 +408,15 @@ def run_implementation_scaffolding(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "scaffold": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "scaffold", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
 
 
 def run_monitoring_agent(state: AISRFState) -> dict[str, Any]:
-    prompt = AGENT_PROMPT_SPECS["monitor"].render(
+    spec = AGENT_PROMPT_SPECS["monitor"]
+    prompt = spec.render(
         _context_block(
             state,
             f"Full cycle outputs: {json.dumps({k: state.get(k, {}) for k in ('env', 'socratic', 'forensic', 'catalyst', 'devils', 'scaffold')}, ensure_ascii=True)}",
@@ -388,7 +424,8 @@ def run_monitoring_agent(state: AISRFState) -> dict[str, Any]:
             "TOOLS: Use estimate_ror_baseline when calibrating target thresholds.",
         )
     )
-    raw = _call_groq(prompt, state["query"], use_tools=True)
+    raw = _call_groq(prompt, state["query"], use_tools=True, temperature=spec.temperature, model=spec.model, use_system_prompt=spec.use_system_prompt)
+    stage_brief = _extract_stage_brief(raw["content"])
     parsed = _json_safe(raw["content"])
     result = parsed.get("monitoring_and_audit_dashboard") if parsed and "monitoring_and_audit_dashboard" in parsed else {
         "ror_tracking_metrics": {
@@ -413,6 +450,7 @@ def run_monitoring_agent(state: AISRFState) -> dict[str, Any]:
     }
     return {
         "monitor": result,
+        "_stage_brief": stage_brief,
         "governance_trace": _append_trace(state, "monitor", prompt, result, raw["tool_calls"]),
         "_runtime_error": raw.get("error"),
     }
@@ -501,4 +539,5 @@ def run_full_pipeline(query: str, rag_context: str, rag_package: dict | None = N
                 result["_governance_trace"] = payload.get("governance_trace", [])
                 result["_mcp_profile"] = initial_state["mcp_profile"]
                 result["_runtime_error"] = payload.get("_runtime_error")
+                result["_stage_brief"] = payload.get("_stage_brief", "")
                 yield (node_name, result)

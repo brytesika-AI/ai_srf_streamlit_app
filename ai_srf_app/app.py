@@ -592,6 +592,7 @@ def _render_message(msg: dict):
 def _render_agent_card(msg: dict):
     stage = msg.get("stage", "")
     data = msg.get("data", {})
+    stage_brief = msg.get("stage_brief", "")
     stage_meta = {
         "env": ("Environmental Monitor", 1, "#C2410C"),
         "socratic": ("Socratic Partner", 2, "#1E3A5F"),
@@ -610,6 +611,15 @@ def _render_agent_card(msg: dict):
         with col_trace:
             if st.checkbox("Show JSON trace", key=f"trace_{stage}_{id(msg)}", value=False):
                 st.json(data, expanded=False)
+
+        if stage_brief:
+            st.markdown(
+                f'<div style="background:#FFFDF9;border:1px solid #EADCC8;border-radius:10px;padding:12px 14px;margin:10px 0 12px;">'
+                f'<div style="font-size:10px;color:#9A6B35;font-family:Space Mono,monospace;font-weight:700;letter-spacing:.08em;margin-bottom:6px;">STAGE BRIEF</div>'
+                f'<div style="font-size:13px;color:#374151;line-height:1.65;">{stage_brief}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
         if stage == "env":
             rs = data.get("current_risk_state", "Nominal")
@@ -824,6 +834,7 @@ with tab_chat:
                 st.session_state.runtime_warnings.append(
                     f"{stage}: {result.get('_runtime_error')}"
                 )
+            stage_brief = result.get("_stage_brief", "") if isinstance(result, dict) else ""
             cleaned_result = {k: v for k, v in result.items() if not str(k).startswith("_")} if isinstance(result, dict) else result
             all_results[stage] = cleaned_result
             st.session_state.cycle_results[stage] = cleaned_result
@@ -866,7 +877,7 @@ with tab_chat:
 
             # Append result message
             st.session_state.messages.append({
-                "role": "agent", "stage": stage, "data": cleaned_result,
+                "role": "agent", "stage": stage, "data": cleaned_result, "stage_brief": stage_brief,
             })
 
         # Synthesis

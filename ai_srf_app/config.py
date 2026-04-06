@@ -17,6 +17,7 @@ GROQ_LLM_MODEL       = "llama-3.3-70b-versatile"   # primary reasoning
 GROQ_FAST_MODEL      = "llama3-8b-8192"             # fast routing/guardrail
 GROQ_EMBED_MODEL     = "nomic-embed-text-v1_5"      # RAG embeddings
 GROQ_EMBED_BASE_URL  = OPENAI_BASE_URL
+GROQ_DEEPSEEK_MODEL  = "deepseek-r1-distill-qwen-32b"
 
 # ─── Vector DB ──────────────────────────────────────────────────────────────
 CHROMA_PERSIST_DIR   = "./chroma_db"
