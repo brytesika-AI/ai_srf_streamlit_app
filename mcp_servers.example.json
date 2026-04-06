@@ -1,0 +1,47 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-fetch"
+      ]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-filesystem",
+        "c:\\Users\\bright.sikazwe\\Downloads\\ai_srf_streamlit_app"
+      ]
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "time": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-time"
+      ]
+    },
+    "exa": {
+      "command": "npx",
+      "args": [
+        "exa-mcp-server"
+      ],
+      "env": {
+        "EXA_API_KEY": "replace_me"
+      }
+    },
+    "firecrawl": {
+      "command": "npx",
+      "args": [
+        "firecrawl-mcp"
+      ],
+      "env": {
+        "FIRECRAWL_API_KEY": "replace_me"
+      }
+    }
+  }
+}

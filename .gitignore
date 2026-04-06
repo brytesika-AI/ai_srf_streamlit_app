@@ -1,0 +1,14 @@
+.venv/
+.env
+ai_srf_app/.env
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.tmp/
+chroma_db/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
